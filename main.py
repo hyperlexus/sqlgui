@@ -7,7 +7,7 @@ import time
 def beautify():
     raw_sql = sql_entry.get("1.0", tk.END)
 
-    keywords = [
+    keywords = [  # todo more keywords (sqlite db)
         "select", "from", "where", "join", "inner", "left", "right", "on",
         "group by", "order by", "having", "limit", "offset", "insert", "into",
         "values", "update", "set", "delete", "create", "table", "drop", "alter",
@@ -28,14 +28,14 @@ def beautify():
 
 def connect_db(database=None):
     try:
-        return mysql.connector.connect(
+        return mysql.connector.connect(  # todo automate opening mysql
             host="localhost",
             user="root",
             password="",
             database=database if database else None
         )
     except mysql.connector.Error as err:
-        messagebox.showerror("Verbindungsfehler", str(err))
+        messagebox.showerror("connection error", str(err))
         return None
 
 def load_databases():
@@ -50,20 +50,22 @@ def load_databases():
         if dbs:
             selected_db.set(dbs[0])
     except mysql.connector.Error as err:
-        messagebox.showerror("Fehler beim Laden der Datenbanken", str(err))
+        messagebox.showerror("an error occurred when loading databases", str(err))
     finally:
         cursor.close()
         conn.close()
 
 def execute_query():
+    # todo when creating or deleting database update database list
+    # todo save last 10 queries and let user go back and forward in the list
     query = sql_entry.get("1.0", tk.END).strip()
     if not query:
-        messagebox.showwarning("Hinweis", "Bitte gib eine SQL-Abfrage ein.")
+        messagebox.showwarning("warning", "please enter an SQL query.")
         return
 
     db_name = selected_db.get()
     if not db_name:
-        messagebox.showwarning("Hinweis", "Bitte wähle eine Datenbank aus.")
+        messagebox.showwarning("warning", "please choose a database.")
         return
 
     conn = connect_db(db_name)
@@ -86,7 +88,7 @@ def execute_query():
             tree["show"] = "headings"
 
             for col in columns:
-                tree.heading(col, text=col)
+                tree.heading(col, text=col)  # todo make table content copyable or export to excel with right click
                 tree.column(col, width=100)
 
             for row in rows:
@@ -100,16 +102,34 @@ def execute_query():
             feedback_label.config(
                 text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec)"
             )
-            messagebox.showinfo("Erfolg", "Abfrage erfolgreich ausgeführt.")
+            messagebox.showinfo("success", f"query ran successfully. {cursor.rowcount} rows affected.")  # todo run select after insert/update
     except mysql.connector.Error as err:
         feedback_label.config(text="")
-        messagebox.showerror("SQL-Fehler", str(err))
+        error_message = str(err)
+        error_message = error_message[(error_message.find(';')+2):]
+        show_message_box(error_message)
     finally:
         cursor.close()
         conn.close()
 
+def show_message_box(message):
+    message_box = tk.Toplevel(root)
+    message_label = tk.Label(message_box, text=message, justify="center")
+    message_label.pack(pady=10, padx=10)
+    button_frame = tk.Frame(message_box)
+    button_frame.pack(pady=(0, 10))
+    def copy_to_clipboard():
+        root.clipboard_clear()
+        root.clipboard_append(message)
+        root.update()
+        copy_button.config(text="copied!")
+    copy_button = tk.Button(button_frame, text="copy", command=copy_to_clipboard)
+    copy_button.pack(side="left", padx=10)
+    close_button = tk.Button(button_frame, text="close", command=message_box.destroy)
+    close_button.pack(side="left", padx=10)
+
 root = tk.Tk()
-root.title("MySQL GUI Viewer")
+root.title("sql gui")
 root.geometry("900x600")
 
 selected_db = tk.StringVar()
@@ -117,7 +137,7 @@ selected_db = tk.StringVar()
 db_frame = tk.Frame(root)
 db_frame.pack(fill="x", padx=10, pady=(10, 0))
 
-tk.Label(db_frame, text="Datenbank auswählen:").pack(side="left", padx=(0, 5))
+tk.Label(db_frame, text="choose database:").pack(side="left", padx=(0, 5))
 
 db_dropdown = ttk.Combobox(db_frame, textvariable=selected_db, state="readonly")
 db_dropdown.pack(side="left")
@@ -129,7 +149,7 @@ sql_entry.insert("1.0", "SHOW TABLES")
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=5)
 
-btn_execute = tk.Button(btn_frame, text="SQL ausführen", command=execute_query)
+btn_execute = tk.Button(btn_frame, text="run SQL", command=execute_query)
 btn_execute.pack(side="left", padx=5)
 
 btn_beautify = tk.Button(btn_frame, text="SQL beautify", command=beautify)
