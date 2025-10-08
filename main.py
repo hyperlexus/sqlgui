@@ -1,3 +1,5 @@
+# todo run select after insert/update
+
 from itertools import tee
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -8,11 +10,16 @@ import csv
 import os
 
 # global config - adjust as needed
-# global config - adjust as needed
 DB_HOST = "localhost"
 DB_USER = "root"
 DB_PASSWORD = os.getenv("MYSQL_PASSWORD", "") # Load from environment, default to empty string
 DB_PORT = int(os.getenv("MYSQL_PORT", 3308)) # Load from environment, convert to int
+
+# --- GLOBAL HISTORY VARIABLES ---
+QUERY_HISTORY = []
+HISTORY_INDEX = -1
+MAX_HISTORY = 10
+# --------------------------------
 
 def describe_all_tables():
     """Fetches all table names from the current DB and runs DESCRIBE for each.
@@ -146,6 +153,7 @@ def beautify():
     for kw in new_line_keywords:
         # Look for the keyword followed by a space or end-of-string
         pattern = r"\s*\b" + re.escape(kw) + r"\b\s*"
+        # NOTE: Replaced the incorrect tabs/spaces with 2 spaces for standard indent
         formatted_sql = re.sub(pattern, f"\n  {kw} ", formatted_sql, flags=re.IGNORECASE)
 
     # 3. Add Line Breaks for commas in SELECT, UPDATE, etc.
@@ -157,9 +165,6 @@ def beautify():
     
     for line in lines:
         if line.strip().startswith("SELECT"):
-            # For a SELECT statement, split the list of columns by comma
-            # but preserve commas inside function parentheses if we could (simplified for now)
-            
             # Simple split by comma followed by any whitespace, or just comma
             parts = [p.strip() for p in line[6:].split(',')]
             
@@ -171,13 +176,14 @@ def beautify():
                         # 4 spaces for column indentation
                         output_lines.append(f"    {part},")
                 # Remove the comma from the last item
-                if output_lines[-1].endswith(','):
+                if output_lines and output_lines[-1].endswith(','):
                     output_lines[-1] = output_lines[-1][:-1]
                 continue
         
         # 4. Indent ON clause for JOINS
         if " JOIN " in line.upper() and " ON " in line.upper():
             # Find the ON keyword
+            # NOTE: Replaced the incorrect tabs/spaces with 4 spaces for standard indent
             line = re.sub(r"\bON\b", "\n    ON", line, flags=re.IGNORECASE)
 
         output_lines.append(line.strip())
@@ -190,7 +196,7 @@ def beautify():
     sql_entry.delete("1.0", tk.END)
     sql_entry.insert("1.0", final_sql)
 
-def copy_table_content(event=None):   
+def copy_table_content(event=None):  
     columns = tree["columns"]
     if not columns:
         messagebox.showinfo("Copy", "No data to copy.")
@@ -323,9 +329,59 @@ def load_databases():
     finally:
         cursor.close()
         conn.close()
+        
+def update_history_buttons():
+    """Enables/disables the back/forward buttons based on the current history index."""
+    # Back button is enabled if not at the start of the history
+    if HISTORY_INDEX > 0:
+        btn_back.config(state=tk.NORMAL)
+    else:
+        btn_back.config(state=tk.DISABLED)
+
+    # Forward button is enabled if not at the end (len - 1) of the history
+    if HISTORY_INDEX < len(QUERY_HISTORY) - 1:
+        btn_forward.config(state=tk.NORMAL)
+    else:
+        btn_forward.config(state=tk.DISABLED)
+
+def add_query_to_history(query):
+    """Adds a query to the history, manages max size, and updates index/buttons."""
+    global QUERY_HISTORY, HISTORY_INDEX
+    
+    # If the user navigated back and runs a new query, clear the "forward" history
+    if HISTORY_INDEX != len(QUERY_HISTORY) - 1:
+        QUERY_HISTORY = QUERY_HISTORY[:HISTORY_INDEX + 1]
+
+    # Avoid adding the same query twice in a row (if not empty)
+    if not QUERY_HISTORY or QUERY_HISTORY[-1] != query:
+        QUERY_HISTORY.append(query)
+        # Maintain maximum history size
+        if len(QUERY_HISTORY) > MAX_HISTORY:
+            QUERY_HISTORY.pop(0) # Remove oldest
+    
+    HISTORY_INDEX = len(QUERY_HISTORY) - 1
+    update_history_buttons()
+
+def query_back():
+    """Moves back one step in the query history and updates the textbox."""
+    global HISTORY_INDEX
+    if HISTORY_INDEX > 0:
+        HISTORY_INDEX -= 1
+        sql_entry.delete("1.0", tk.END)
+        sql_entry.insert("1.0", QUERY_HISTORY[HISTORY_INDEX])
+    update_history_buttons()
+
+def query_forward():
+    """Moves forward one step in the query history and updates the textbox."""
+    global HISTORY_INDEX
+    if HISTORY_INDEX < len(QUERY_HISTORY) - 1:
+        HISTORY_INDEX += 1
+        sql_entry.delete("1.0", tk.END)
+        sql_entry.insert("1.0", QUERY_HISTORY[HISTORY_INDEX])
+    update_history_buttons()
+
 
 def execute_query():
-    # todo save last 10 queries and let user go back and forward in the list
     query = sql_entry.get("1.0", tk.END).strip()
     if not query:
         messagebox.showwarning("warning", "please enter an SQL query.")
@@ -346,6 +402,10 @@ def execute_query():
     try:
         cursor.execute(query)
         duration = time.time() - start_time
+        
+        # --- Add to History only upon successful execution ---
+        add_query_to_history(query)
+        # ----------------------------------------------------
 
         if cursor.description:  # SELECT-like queries
             rows = cursor.fetchall()
@@ -374,7 +434,7 @@ def execute_query():
             feedback_label.config(
                 text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec)"
             )
-            messagebox.showinfo("success", f"query ran successfully. {cursor.rowcount} rows affected.")  # todo run select after insert/update
+            messagebox.showinfo("success", f"query ran successfully. {cursor.rowcount} rows affected.") 
     except mysql.connector.Error as err:
         feedback_label.config(text="")
         error_message = str(err)
@@ -402,7 +462,7 @@ def show_message_box(message):
     close_button.pack(side="left", padx=10)
 
 root = tk.Tk()
-root.title("sql gui")
+root.title("SQL GUI")
 root.geometry("900x600")
 
 selected_db = tk.StringVar()
@@ -410,22 +470,30 @@ selected_db = tk.StringVar()
 db_frame = tk.Frame(root)
 db_frame.pack(fill="x", padx=10, pady=(10, 0))
 
-tk.Label(db_frame, text="choose database:").pack(side="left", padx=(0, 5))
+tk.Label(db_frame, text="Choose Database:").pack(side="left", padx=(0, 5))
 
 db_dropdown = ttk.Combobox(db_frame, textvariable=selected_db, state="readonly")
 db_dropdown.pack(side="left")
 
-btn_desc_all = tk.Button(db_frame, text="DESC all tables", command=describe_all_tables)
+btn_desc_all = tk.Button(db_frame, text="DESC All Tables", command=describe_all_tables)
 btn_desc_all.pack(side="left", padx=(10, 5))
 
 # --- Button Frame (positioned above the PanedWindow) ---
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=5)
 
-btn_execute = tk.Button(btn_frame, text="run query (F5)", command=execute_query)
+# ADDED: Back button
+btn_back = tk.Button(btn_frame, text="< Back (F1)", command=query_back, state=tk.DISABLED)
+btn_back.pack(side="left", padx=5)
+
+# ADDED: Forward button
+btn_forward = tk.Button(btn_frame, text="Forward (F2) >", command=query_forward, state=tk.DISABLED)
+btn_forward.pack(side="left", padx=5)
+
+btn_execute = tk.Button(btn_frame, text="Run Query (F5)", command=execute_query)
 btn_execute.pack(side="left", padx=5)
 
-btn_beautify = tk.Button(btn_frame, text="beautify query (F9)", command=beautify)
+btn_beautify = tk.Button(btn_frame, text="Beautify Query (F9)", command=beautify)
 btn_beautify.pack(side="left", padx=5)
 # --- End Button Frame ---
 
@@ -440,6 +508,10 @@ sql_entry_frame = tk.Frame(paned_window)
 sql_entry = tk.Text(sql_entry_frame, height=10)
 sql_entry.pack(expand=True, fill="both") # Fill the frame
 sql_entry.insert("1.0", "SHOW TABLES")
+
+# Add initial query to history (so the index starts correctly)
+add_query_to_history(sql_entry.get("1.0", tk.END).strip()) 
+
 
 # Add the frame to the PanedWindow. weight=0 means it only takes its minimum size (height=10).
 paned_window.add(sql_entry_frame, weight=0)
@@ -464,6 +536,8 @@ feedback_label = tk.Label(root, text="", anchor="w", fg="gray")
 feedback_label.pack(fill="x", padx=10, pady=(0, 10))
 
 load_databases()
+# Initial update of history buttons after loading first query
+update_history_buttons()
 
 context_menu = tk.Menu(root, tearoff=0) # menu for right-click
 
@@ -502,5 +576,7 @@ tree.bind("<Button-3>", show_context_menu)
 
 root.bind('<F5>', lambda event: execute_query()) 
 root.bind('<F9>', lambda event: beautify())
+root.bind('<F1>', lambda event: query_back())
+root.bind('<F2>', lambda event: query_forward())
 
 root.mainloop()
