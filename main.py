@@ -109,9 +109,12 @@ def describe_all_tables():
         conn.close()
 
 def beautify():
-    raw_sql = sql_entry.get("1.0", tk.END)
+    raw_sql = sql_entry.get("1.0", tk.END).strip()
+    if not raw_sql:
+        return
 
-    keywords = [  # todo more keywords (sqlite db)
+    # 1. Convert to uppercase and strip
+    keywords = [
         "select", "from", "where", "join", "inner", "left", "right", "on",
         "group by", "order by", "having", "limit", "offset", "insert", "into",
         "values", "update", "set", "delete", "create", "table", "drop", "alter",
@@ -123,12 +126,67 @@ def beautify():
     def replace_keyword(match):
         return match.group(0).upper()
 
+    # Convert keywords to uppercase
     for kw in sorted(keywords, key=len, reverse=True):
         pattern = r"\b" + re.escape(kw) + r"\b"
         raw_sql = re.sub(pattern, replace_keyword, raw_sql, flags=re.IGNORECASE)
 
+    # 2. Add Line Breaks for major clauses
+    # Keywords that should start on a new line, prefixed with two spaces for indentation
+    new_line_keywords = [
+        "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
+        "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "UNION", "VALUES", "SET"
+    ]
+    
+    formatted_sql = raw_sql
+    
+    # Prepend major keywords with a newline and two spaces for indentation
+    for kw in new_line_keywords:
+        # Look for the keyword followed by a space or end-of-string
+        pattern = r"\s*\b" + re.escape(kw) + r"\b\s*"
+        formatted_sql = re.sub(pattern, f"\n  {kw} ", formatted_sql, flags=re.IGNORECASE)
+
+    # 3. Add Line Breaks for commas in SELECT, UPDATE, etc.
+    # This keeps each selected column or value on its own line, indented by 4 spaces.
+    
+    # Split the query by lines to process them individually
+    lines = formatted_sql.split('\n')
+    output_lines = []
+    
+    for line in lines:
+        if line.strip().startswith("SELECT"):
+            # For a SELECT statement, split the list of columns by comma
+            # but preserve commas inside function parentheses if we could (simplified for now)
+            
+            # Simple split by comma followed by any whitespace, or just comma
+            parts = [p.strip() for p in line[6:].split(',')]
+            
+            if len(parts) > 1:
+                # Keep SELECT on the first line, then indent subsequent columns
+                output_lines.append(line.split(' ', 1)[0]) # Keep "SELECT"
+                for part in parts:
+                    if part:
+                        # 4 spaces for column indentation
+                        output_lines.append(f"    {part},")
+                # Remove the comma from the last item
+                if output_lines[-1].endswith(','):
+                    output_lines[-1] = output_lines[-1][:-1]
+                continue
+        
+        # 4. Indent ON clause for JOINS
+        if " JOIN " in line.upper() and " ON " in line.upper():
+            # Find the ON keyword
+            line = re.sub(r"\bON\b", "\n    ON", line, flags=re.IGNORECASE)
+
+        output_lines.append(line.strip())
+
+    # 5. Final cleanup: Remove blank lines and excessive leading/trailing whitespace
+    final_sql = "\n".join(output_lines)
+    final_sql = re.sub(r'\n\s*\n', '\n', final_sql).strip() # Remove redundant blank lines
+    
+    # 6. Write output
     sql_entry.delete("1.0", tk.END)
-    sql_entry.insert("1.0", raw_sql.strip())
+    sql_entry.insert("1.0", final_sql)
 
 def copy_table_content(event=None):   
     columns = tree["columns"]
