@@ -1,5 +1,3 @@
-# todo run select after insert/update
-
 from itertools import tee
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -380,6 +378,20 @@ def query_forward():
         sql_entry.insert("1.0", QUERY_HISTORY[HISTORY_INDEX])
     update_history_buttons()
 
+def get_primary_key_column(conn, table_name):
+    """Findet den Namen der Primary Key Spalte für die gegebene Tabelle."""
+    cursor = conn.cursor()
+    try:
+        # Finde den PK-Namen
+        cursor.execute(f"DESCRIBE `{table_name}`")
+        for field_name, _, _, key_type, _, _ in cursor.fetchall():
+            if key_type == 'PRI':
+                return field_name
+        return None # Kein PK gefunden
+    except mysql.connector.Error:
+        return None
+    finally:
+        cursor.close()
 
 def execute_query():
     query = sql_entry.get("1.0", tk.END).strip()
@@ -398,6 +410,23 @@ def execute_query():
     cursor = conn.cursor()
 
     start_time = time.time()
+    
+    # --- Speicherung für die nachträgliche SELECT-Abfrage ---
+    post_commit_select_query = None
+    table_name = None
+    query_upper = query.upper().strip() # Sicherstellen, dass die Großschreibung und Stripping korrekt sind
+    
+    # NEU: Der '?' Quantifizierer (non-greedy) wurde entfernt, um den gesamten Tabellennamen zu erfassen
+    table_match = re.search(
+        r"(?:INSERT\s+INTO|UPDATE)\s+`?([\w.]+)`?\s*", 
+        query, 
+        re.IGNORECASE
+    )
+
+    if table_match:
+        # Extrahiere nur den Tabellennamen (den letzten Teil, falls Schema-Präfix vorhanden)
+        table_name = table_match.group(1).split('.')[-1]
+    # --------------------------------------------------------
 
     try:
         cursor.execute(query)
@@ -407,16 +436,17 @@ def execute_query():
         add_query_to_history(query)
         # ----------------------------------------------------
 
-        if cursor.description:  # SELECT-like queries
+        if cursor.description:  # SELECT-like queries (Data Retrieval)
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
 
+            # Clear and configure treeview
             tree.delete(*tree.get_children())
             tree["columns"] = columns
             tree["show"] = "headings"
 
             for col in columns:
-                tree.heading(col, text=col)  
+                tree.heading(col, text=col) 
                 tree.column(col, width=100)
 
             for row in rows:
@@ -425,24 +455,125 @@ def execute_query():
             feedback_label.config(
                 text=f"{len(rows)} rows in set ({duration:.3f} sec)"
             )
-        else:  # INSERT, UPDATE, DELETE (and DDL)
+        else:  # INSERT, UPDATE, DELETE, DDL (Data Modification/Definition)
             conn.commit()
-            query_upper = query.upper()
-            if "CREATE DATABASE" in query_upper or "DROP DATABASE" in query_upper:
-                load_databases() 
             
-            feedback_label.config(
-                text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec)"
-            )
-            messagebox.showinfo("success", f"query ran successfully. {cursor.rowcount} rows affected.") 
+            # --- NEUE LOGIK FÜR POST-COMMIT-SELECT START ---
+            
+            if table_name and query_upper.startswith("INSERT INTO"):
+                last_id_of_first_row = cursor.lastrowid # Dies ist die ID der ersten eingefügten Zeile
+                num_rows_inserted = cursor.rowcount     # Anzahl aller eingefügten Zeilen
+                
+                # Prerequisite: get_primary_key_column needs the existing connection before closing it
+                pk_column = get_primary_key_column(conn, table_name) 
+
+                if last_id_of_first_row and pk_column and num_rows_inserted > 1:
+                    # FALL A: MEHRERE DATENSÄTZE
+                    # Selektiere alle IDs im Bereich [Start-ID] bis [Start-ID + Anzahl - 1]
+                    end_id = last_id_of_first_row + num_rows_inserted - 1
+                    post_commit_select_query = (
+                        f"SELECT * FROM `{table_name}` "
+                        f"WHERE {pk_column} BETWEEN {last_id_of_first_row} AND {end_id} "
+                        f"ORDER BY {pk_column} ASC"
+                    )
+                elif last_id_of_first_row and pk_column and num_rows_inserted == 1:
+                    # FALL B: EIN EINZELNER DATENSATZ
+                    post_commit_select_query = f"SELECT * FROM `{table_name}` WHERE {pk_column} = {last_id_of_first_row}"
+                elif table_name:
+                    # FALL C: Fallback (z.B. kein AUTO_INCREMENT oder PK unbekannt). 
+                    # Zeige die neuesten Einträge basierend auf der Anzahl der eingefügten Zeilen.
+                    # Wir nutzen hier ORDER BY 1 DESC, was annimmt, dass die erste Spalte (meist ID) absteigend sortiert wird.
+                    post_commit_select_query = f"SELECT * FROM `{table_name}` ORDER BY 1 DESC LIMIT {num_rows_inserted}"    
+                    
+            elif table_name and query_upper.startswith("UPDATE"):
+                # 2. Extrahiere die WHERE-Klausel (komplex und anfällig, daher nur rudimentär)
+                match_where = re.search(r"WHERE\s+(.+?)(?: LIMIT |;|$)", query, re.IGNORECASE | re.DOTALL)
+                
+                if match_where:
+                    where_clause = match_where.group(1).strip()
+                    post_commit_select_query = f"SELECT * FROM `{table_name}` WHERE {where_clause}"
+                else:
+                    # Fallback: Zeige die ersten 10 Zeilen der Tabelle
+                    post_commit_select_query = f"SELECT * FROM `{table_name}` LIMIT 10"
+
+            # Führe die nachträgliche SELECT-Abfrage aus
+            if post_commit_select_query:
+                
+                # Schließe den aktuellen Cursor/Verbindung, da wir eine neue Verbindung für den SELECT brauchen
+                cursor.close() 
+                conn.close()
+                
+                # NEUE VERBINDUNG FÜR DEN NACHTRÄGLICHEN SELECT
+                conn = connect_db(db_name)
+                if not conn:
+                    return # Verbindung fehlgeschlagen
+                cursor = conn.cursor()
+                
+                try:
+                    select_start_time = time.time()
+                    cursor.execute(post_commit_select_query)
+                    select_duration = time.time() - select_start_time
+                    
+                    rows = cursor.fetchall()
+                    columns = [desc[0] for desc in cursor.description]
+                    
+                    # Treeview leeren und konfigurieren
+                    tree.delete(*tree.get_children())
+                    tree["columns"] = columns
+                    tree["show"] = "headings"
+
+                    for col in columns:
+                        tree.heading(col, text=col) 
+                        tree.column(col, width=100)
+
+                    for row in rows:
+                        tree.insert("", "end", values=row)
+
+                    # Gib Feedback für beide Aktionen
+                    action_type = "Updated" if query_upper.startswith("UPDATE") else "Inserted"
+                    feedback_label.config(
+                        text=f"Query OK, {cursor.rowcount} rows affected. Auto-SELECT: {len(rows)} rows from `{table_name}` in set ({select_duration:.3f} sec)"
+                    )
+                    
+                    # Zeige eine Erfolgsmeldung für die ursprüngliche Operation
+                    messagebox.showinfo("Success", f"{action_type} query ran successfully. {cursor.rowcount} rows affected. Showing results in the table below.") 
+                    
+                except mysql.connector.Error as select_err:
+                    # Gib Feedback nur für die ursprüngliche Operation, zeige aber den Fehler der SELECT-Folgeabfrage
+                    feedback_label.config(
+                        text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec). Auto-SELECT FAILED."
+                    )
+                    error_message = f"Success on initial query, but auto-select failed: {str(select_err)[(str(select_err).find(';')+2):]}"
+                    show_message_box(error_message)
+                    
+            # --- NEUE LOGIK FÜR POST-COMMIT-SELECT END ---
+            
+            elif "CREATE DATABASE" in query_upper or "DROP DATABASE" in query_upper:
+                load_databases() 
+                feedback_label.config(
+                    text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec)"
+                )
+                messagebox.showinfo("Success", f"DDL query ran successfully. {cursor.rowcount} rows affected.")
+            else:
+                # Standardbehandlung für DELETE und andere DML/DDL, die keinen Auto-Select auslösen
+                feedback_label.config(
+                    text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec)"
+                )
+                messagebox.showinfo("Success", f"Query ran successfully. {cursor.rowcount} rows affected.")
+                
     except mysql.connector.Error as err:
         feedback_label.config(text="")
+        # Die ursprüngliche Fehlerbehandlung (wie in Ihrer Vorlage)
         error_message = str(err)
         error_message = error_message[(error_message.find(';')+2):]
         show_message_box(error_message)
+        
     finally:
-        cursor.close()
-        conn.close()
+        # Cursor und Verbindung schließen, falls sie nicht bereits für den Auto-Select geschlossen wurden
+        if 'cursor' in locals() and cursor is not None:
+             cursor.close()
+        if 'conn' in locals() and conn is not None:
+             conn.close()
 
 def show_message_box(message):
     message_box = tk.Toplevel(root)
