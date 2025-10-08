@@ -1,14 +1,16 @@
+from itertools import tee
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, filedialog
 import mysql.connector
 import re
 import time
+import csv
 
-# Globale Konfiguration (außerhalb der Funktion)
+# global config - adjust as needed
 DB_HOST = "localhost"
 DB_USER = "root"
 DB_PASSWORD = ""
-DB_PORT = 3308 # normal ist 3306, anpassen falls nötig
+DB_PORT = 3308 # default mysql port is 3306
 
 def beautify():
     raw_sql = sql_entry.get("1.0", tk.END)
@@ -31,6 +33,93 @@ def beautify():
 
     sql_entry.delete("1.0", tk.END)
     sql_entry.insert("1.0", raw_sql.strip())
+
+def copy_table_content(event=None):
+    """Kopiert die Spaltennamen und alle sichtbaren Zeilen in die Zwischenablage."""
+    
+    columns = tree["columns"]
+    if not columns:
+        messagebox.showinfo("Copy", "No data to copy.")
+        return
+        
+    content = "\t".join(columns) + "\n"
+    
+    for child in tree.get_children():
+        values = tree.item(child, 'values')
+        # convert all values to string to avoid issues with None or other types
+        content += "\t".join(map(str, values)) + "\n"
+        
+    root.clipboard_clear()
+    root.clipboard_append(content.strip()) # strip removes the last newline
+    root.update()
+    messagebox.showinfo("Copy", f"{len(tree.get_children())} rows copied to clipboard.")   
+
+def copy_selected_cell(event):
+    """Kopiert den Inhalt des Feldes (Zelle), auf das rechts geklickt wurde."""
+    try:
+        # find the row under the cursor
+        item_id = tree.identify_row(event.y)
+        if not item_id:
+            return
+
+        # find the column under the cursor
+        column_id = tree.identify_column(event.x)
+        if not column_id:
+            return
+
+        # convert column id to index
+        column_index = int(column_id.replace('#', '')) - 1
+
+        # take the value of the cell
+        values = tree.item(item_id, 'values')
+        
+        if 0 <= column_index < len(values):
+            cell_value = str(values[column_index])
+            
+            root.clipboard_clear()
+            root.clipboard_append(cell_value)
+            root.update()
+
+    except Exception as e:
+        # ignore if click was not on a cell
+        print(f"Copy error: {e}")
+        pass    
+
+def export_to_excel():
+    """Exportiert alle aktuell angezeigten Datensätze als CSV-Datei."""
+    
+    columns = tree["columns"]
+    if not columns:
+        messagebox.showwarning("Export", "No data to export.")
+        return
+
+    # open file dialog to choose save location
+    filename = filedialog.asksaveasfilename(
+        defaultextension=".csv",
+        filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        title="Save result as CSV (Excel compatible)"
+    )
+    
+    if not filename:
+        return # user cancelled
+        
+    try:
+        with open(filename, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f, delimiter=';') # Semicolon as delimiter for Excel compatibility
+            
+            # 1. write header
+            writer.writerow(columns)
+            
+            # 2. write data rows
+            for child in tree.get_children():
+                values = tree.item(child, 'values')
+                # convert all values to string to avoid issues with None or other types
+                writer.writerow(values)
+                
+        messagebox.showinfo("Export Success", f"Successfully exported {len(tree.get_children())} rows to:\n{filename}")
+        
+    except Exception as e:
+        messagebox.showerror("Export Error", f"An error occurred during export: {e}")    
 
 def connect_db(database=None):
     try:
@@ -86,7 +175,7 @@ def execute_query():
         cursor.execute(query)
         duration = time.time() - start_time
 
-        if cursor.description:  # SELECT-artige Abfrage
+        if cursor.description:  # SELECT-like queries
             rows = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
 
@@ -95,7 +184,7 @@ def execute_query():
             tree["show"] = "headings"
 
             for col in columns:
-                tree.heading(col, text=col)  # todo make table content copyable or export to excel with right click
+                tree.heading(col, text=col)  
                 tree.column(col, width=100)
 
             for row in rows:
@@ -104,7 +193,7 @@ def execute_query():
             feedback_label.config(
                 text=f"{len(rows)} rows in set ({duration:.3f} sec)"
             )
-        else:  # INSERT, UPDATE, DELETE (und DDL)
+        else:  # INSERT, UPDATE, DELETE (and DDL)
             conn.commit()
             query_upper = query.upper()
             if "CREATE DATABASE" in query_upper or "DROP DATABASE" in query_upper:
@@ -181,5 +270,36 @@ feedback_label = tk.Label(root, text="", anchor="w", fg="gray")
 feedback_label.pack(fill="x", padx=10, pady=(0, 10))
 
 load_databases()
+
+context_menu = tk.Menu(root, tearoff=0) # menu for right-click
+
+def show_context_menu(event):
+    global context_menu
+    
+    # test where the click happened
+    item_id = tree.identify_row(event.y)
+    column_id = tree.identify_column(event.x)
+    
+    # lastly clear the menu to avoid duplicates
+    context_menu.delete(0, tk.END) 
+
+    if item_id and column_id:
+        # the click was on a cell
+        context_menu.add_command(
+            label="Copy Selected Cell", 
+            command=lambda: copy_selected_cell(event) 
+        )
+        context_menu.add_separator()
+
+    # always add these options
+    context_menu.add_command(label="Copy All Data (Tab separated)", command=copy_table_content)
+    context_menu.add_separator()
+    context_menu.add_command(label="Export to Excel (CSV)", command=export_to_excel)
+
+    context_menu.post(event.x_root, event.y_root)
+
+# bind right-click
+tree.bind("<Button-3>", show_context_menu)
+# Windows/Linux is <Button-3>, Mac is <Button-2>
 
 root.mainloop()
