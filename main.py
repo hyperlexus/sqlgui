@@ -5,12 +5,14 @@ import mysql.connector
 import re
 import time
 import csv
+import os
 
+# global config - adjust as needed
 # global config - adjust as needed
 DB_HOST = "localhost"
 DB_USER = "root"
-DB_PASSWORD = ""
-DB_PORT = 3308 # default mysql port is 3306
+DB_PASSWORD = os.getenv("MYSQL_PASSWORD", "") # Load from environment, default to empty string
+DB_PORT = int(os.getenv("MYSQL_PORT", 3308)) # Load from environment, convert to int
 
 def describe_all_tables():
     """Fetches all table names from the current DB and runs DESCRIBE for each.
@@ -273,6 +275,23 @@ def export_to_excel():
     except Exception as e:
         messagebox.showerror("Export Error", f"An error occurred during export: {e}")    
 
+def format_and_display_error(err):
+    """Formats a mysql.connector.Error and calls the display box."""
+    error_message = str(err)
+    
+    # Extract the message part after the leading error code and state (e.g., '2003 (HY000): ')
+    # The existing code used ';', but a colon is more common for the standard connector message.
+    if ':' in error_message:
+        # Find the index of the first colon, and start after the space/colon
+        error_message = error_message[error_message.find(':') + 2:] 
+    
+    # IMPROVED UX: Specifically detect common authentication errors
+    if "Access denied for user" in error_message or "Authentication plugin cannot be loaded" in error_message:
+        error_message = "Authentication failed. Please ensure your MySQL server is running and check your username/password/port configuration."
+    
+    # Use the existing function to display the formatted message
+    show_message_box(error_message.strip())
+
 def connect_db(database=None):
     try:
         conn = mysql.connector.connect(
@@ -284,7 +303,8 @@ def connect_db(database=None):
         )
         return conn
     except mysql.connector.Error as err:
-        messagebox.showerror("connection error", str(err))
+        # Replaced messagebox.showerror with the new helper function
+        format_and_display_error(err) 
         return None
 
 def load_databases():
@@ -402,10 +422,10 @@ btn_desc_all.pack(side="left", padx=(10, 5))
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=5)
 
-btn_execute = tk.Button(btn_frame, text="run SQL", command=execute_query)
+btn_execute = tk.Button(btn_frame, text="run query (F5)", command=execute_query)
 btn_execute.pack(side="left", padx=5)
 
-btn_beautify = tk.Button(btn_frame, text="SQL beautify", command=beautify)
+btn_beautify = tk.Button(btn_frame, text="beautify query (F9)", command=beautify)
 btn_beautify.pack(side="left", padx=5)
 # --- End Button Frame ---
 
@@ -479,5 +499,8 @@ def show_context_menu(event):
 # bind right-click
 tree.bind("<Button-3>", show_context_menu)
 # Windows/Linux is <Button-3>, Mac is <Button-2>
+
+root.bind('<F5>', lambda event: execute_query()) 
+root.bind('<F9>', lambda event: beautify())
 
 root.mainloop()
