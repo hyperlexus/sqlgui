@@ -64,7 +64,6 @@ def load_databases():
         conn.close()
 
 def execute_query():
-    # todo when creating or deleting database update database list
     # todo save last 10 queries and let user go back and forward in the list
     query = sql_entry.get("1.0", tk.END).strip()
     if not query:
@@ -105,8 +104,12 @@ def execute_query():
             feedback_label.config(
                 text=f"{len(rows)} rows in set ({duration:.3f} sec)"
             )
-        else:  # INSERT, UPDATE, DELETE
+        else:  # INSERT, UPDATE, DELETE (und DDL)
             conn.commit()
+            query_upper = query.upper()
+            if "CREATE DATABASE" in query_upper or "DROP DATABASE" in query_upper:
+                load_databases() 
+            
             feedback_label.config(
                 text=f"Query OK, {cursor.rowcount} rows affected ({duration:.3f} sec)"
             )
