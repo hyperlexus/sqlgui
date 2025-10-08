@@ -12,6 +12,102 @@ DB_USER = "root"
 DB_PASSWORD = ""
 DB_PORT = 3308 # default mysql port is 3306
 
+def describe_all_tables():
+    """Fetches all table names from the current DB and runs DESCRIBE for each.
+    The results are written to the sql_entry Textbox with alignment."""
+    
+    db_name = selected_db.get()
+    if not db_name:
+        messagebox.showwarning("Warning", "Please choose a database first.")
+        return
+
+    conn = connect_db(db_name)
+    if not conn:
+        return
+    cursor = conn.cursor()
+    
+    output = ""
+    start_time = time.time()
+
+    try:
+        # 1. Fetch all table names
+        cursor.execute("SHOW TABLES")
+        tables = [row[0] for row in cursor.fetchall()]
+        
+        if not tables:
+            output = f"Database '{db_name}' contains no tables."
+        else:
+            # Column headers for the description output
+            desc_cols = ["Field", "Type", "Null", "Key", "Default", "Extra"]
+            
+            # --- Dynamic Formatting Start ---
+            
+            for table_name in tables:
+                output += f"tablename: {table_name}\n"
+                
+                cursor.execute(f"DESCRIBE `{table_name}`")
+                desc_rows = cursor.fetchall()
+                
+                # Convert all values to strings and replace None/NULL
+                processed_rows = []
+                for row in desc_rows:
+                    # Convert None to the string 'NULL' for better display
+                    str_row = [str(x) if x is not None else 'NULL' for x in row]
+                    processed_rows.append(str_row)
+
+                # Determine the maximum width of each column
+                col_widths = [len(col) for col in desc_cols]
+                for row in processed_rows:
+                    for i, value in enumerate(row):
+                        if i < len(col_widths): 
+                            col_widths[i] = max(col_widths[i], len(value))
+                        else:
+                            # Should not happen with DESCRIBE but handles unexpected columns
+                            col_widths.append(len(value))
+
+                # Spacing between columns
+                padding = 2
+                
+                # Write Header
+                header_line = ""
+                for i, col in enumerate(desc_cols):
+                    # Align left (ljust)
+                    header_line += col.ljust(col_widths[i] + padding)
+                output += header_line.rstrip() + "\n"
+                
+                # Write separator line
+                separator_line = ""
+                for i, width in enumerate(col_widths):
+                    separator_line += "-" * width + " " * padding
+                output += separator_line.rstrip() + "\n"
+                
+                # Write data rows
+                for row in processed_rows:
+                    data_line = ""
+                    for i, value in enumerate(row):
+                        # Align left (ljust)
+                        data_line += value.ljust(col_widths[i] + padding)
+                    output += data_line.rstrip() + "\n"
+                
+                output += "\n" # Empty line between tables
+        
+        duration = time.time() - start_time
+        
+        # 3. Write output to the textbox
+        sql_entry.delete("1.0", tk.END)
+        sql_entry.insert("1.0", output.strip())
+        
+        feedback_label.config(
+            text=f"Successfully described {len(tables)} tables ({duration:.3f} sec)"
+        )
+        
+    except mysql.connector.Error as err:
+        error_message = str(err)[(str(err).find(';')+2):]
+        show_message_box(f"Error during table description: {error_message}")
+    finally:
+        cursor.close()
+        conn.close()
+
 def beautify():
     raw_sql = sql_entry.get("1.0", tk.END)
 
@@ -241,6 +337,9 @@ tk.Label(db_frame, text="choose database:").pack(side="left", padx=(0, 5))
 
 db_dropdown = ttk.Combobox(db_frame, textvariable=selected_db, state="readonly")
 db_dropdown.pack(side="left")
+
+btn_desc_all = tk.Button(db_frame, text="DESC all tables", command=describe_all_tables)
+btn_desc_all.pack(side="left", padx=(10, 5))
 
 sql_entry = tk.Text(root, height=10)
 sql_entry.pack(fill="x", padx=10, pady=10)
