@@ -4,6 +4,12 @@ import mysql.connector
 import re
 import time
 
+# Globale Konfiguration (außerhalb der Funktion)
+DB_HOST = "localhost"
+DB_USER = "root"
+DB_PASSWORD = ""
+DB_PORT = 3308 # normal ist 3306, anpassen falls nötig
+
 def beautify():
     raw_sql = sql_entry.get("1.0", tk.END)
 
@@ -28,12 +34,14 @@ def beautify():
 
 def connect_db(database=None):
     try:
-        return mysql.connector.connect(  # todo automate opening mysql
-            host="localhost",
-            user="root",
-            password="",
+        conn = mysql.connector.connect(
+            host=DB_HOST,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            port=DB_PORT,        
             database=database if database else None
         )
+        return conn
     except mysql.connector.Error as err:
         messagebox.showerror("connection error", str(err))
         return None
