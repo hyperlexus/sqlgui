@@ -130,9 +130,7 @@ def beautify():
     sql_entry.delete("1.0", tk.END)
     sql_entry.insert("1.0", raw_sql.strip())
 
-def copy_table_content(event=None):
-    """Kopiert die Spaltennamen und alle sichtbaren Zeilen in die Zwischenablage."""
-    
+def copy_table_content(event=None):   
     columns = tree["columns"]
     if not columns:
         messagebox.showinfo("Copy", "No data to copy.")
@@ -148,7 +146,7 @@ def copy_table_content(event=None):
     root.clipboard_clear()
     root.clipboard_append(content.strip()) # strip removes the last newline
     root.update()
-    messagebox.showinfo("Copy", f"{len(tree.get_children())} rows copied to clipboard.")   
+    messagebox.showinfo("Copy", f"{len(tree.get_children())} rows copied to clipboard.")  
 
 def copy_selected_cell(event):
     """Kopiert den Inhalt des Feldes (Zelle), auf das rechts geklickt wurde."""
@@ -310,7 +308,8 @@ def execute_query():
 
 def show_message_box(message):
     message_box = tk.Toplevel(root)
-    message_label = tk.Label(message_box, text=message, justify="center")
+    message_box.title("Error")
+    message_label = tk.Label(message_box, text=message, justify="left", wraplength=400)
     message_label.pack(pady=10, padx=10)
     button_frame = tk.Frame(message_box)
     button_frame.pack(pady=(0, 10))
@@ -341,10 +340,7 @@ db_dropdown.pack(side="left")
 btn_desc_all = tk.Button(db_frame, text="DESC all tables", command=describe_all_tables)
 btn_desc_all.pack(side="left", padx=(10, 5))
 
-sql_entry = tk.Text(root, height=10)
-sql_entry.pack(fill="x", padx=10, pady=10)
-sql_entry.insert("1.0", "SHOW TABLES")
-
+# --- Button Frame (positioned above the PanedWindow) ---
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=5)
 
@@ -353,9 +349,28 @@ btn_execute.pack(side="left", padx=5)
 
 btn_beautify = tk.Button(btn_frame, text="SQL beautify", command=beautify)
 btn_beautify.pack(side="left", padx=5)
+# --- End Button Frame ---
 
-tree_frame = tk.Frame(root)
-tree_frame.pack(expand=True, fill="both", padx=10, pady=5)
+
+# --- PanedWindow for resizable input/output areas ---
+paned_window = ttk.PanedWindow(root, orient=tk.VERTICAL)
+paned_window.pack(expand=True, fill="both", padx=10, pady=(0, 10))
+
+# 1. SQL Input Area (top pane)
+# Use a Frame to hold the Text widget for easier management within the PanedWindow
+sql_entry_frame = tk.Frame(paned_window)
+sql_entry = tk.Text(sql_entry_frame, height=10)
+sql_entry.pack(expand=True, fill="both") # Fill the frame
+sql_entry.insert("1.0", "SHOW TABLES")
+
+# Add the frame to the PanedWindow. weight=0 means it only takes its minimum size (height=10).
+paned_window.add(sql_entry_frame, weight=0)
+
+
+# 2. Treeview Area (bottom pane)
+tree_frame = tk.Frame(paned_window)
+# Add the treeview frame to the PanedWindow. weight=1 allows it to expand.
+paned_window.add(tree_frame, weight=1) 
 
 tree_scroll = tk.Scrollbar(tree_frame)
 tree_scroll.pack(side="right", fill="y")
@@ -364,6 +379,8 @@ tree = ttk.Treeview(tree_frame, yscrollcommand=tree_scroll.set)
 tree.pack(expand=True, fill="both")
 
 tree_scroll.config(command=tree.yview)
+
+# --- End PanedWindow ---
 
 feedback_label = tk.Label(root, text="", anchor="w", fg="gray")
 feedback_label.pack(fill="x", padx=10, pady=(0, 10))
@@ -395,7 +412,11 @@ def show_context_menu(event):
     context_menu.add_separator()
     context_menu.add_command(label="Export to Excel (CSV)", command=export_to_excel)
 
-    context_menu.post(event.x_root, event.y_root)
+    try:
+        context_menu.post(event.x_root, event.y_root)
+    except tk.TclError:
+        # Ignore TclError if the menu cannot be posted
+        pass
 
 # bind right-click
 tree.bind("<Button-3>", show_context_menu)
