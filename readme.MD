@@ -5,11 +5,11 @@ beautify buttons uses keywords and capitalises them
 
 
 ## how to install (needs python):
-`git clone https://www.github.com/hyperlexus/sqlgui.git`
-`cd sqlgui`
-`python -m venv venv`
-`.\venv\Scripts\activate.bat` or `source venv/Scripts/activate`
-`python -m pip install -r requirements.txt`
+`git clone https://www.github.com/hyperlexus/sqlgui.git`\
+`cd sqlgui`\
+`python -m venv venv`\
+`.\venv\Scripts\activate.bat` or `source venv/Scripts/activate`\
+`python -m pip install -r requirements.txt`\
 `python main.py`
 
 
