@@ -5,7 +5,7 @@ beautify buttons uses keywords and capitalises them
 
 
 
-\## how to install (needs python):
+## how to install (needs python):
 `git clone https://www.github.com/hyperlexus/sqlgui.git`
 
 `python -m venv venv`
