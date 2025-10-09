@@ -105,7 +105,7 @@ def beautify():
         "values", "update", "set", "delete", "create", "table", "drop", "alter",
         "add", "distinct", "union", "all", "as", "and", "or", "not", "in", "is",
         "null", "like", "between", "exists", "case", "when", "then", "else", "end",
-        "sum", "avg", "min", "max", "count", "upper", "lower", "show"
+        "sum", "avg", "min", "max", "count", "upper", "lower", "show", "desc", "asc"
     ]
 
     def replace_keyword(match):
