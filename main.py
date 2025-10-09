@@ -1,4 +1,3 @@
-from itertools import tee
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import mysql.connector
@@ -7,21 +6,18 @@ import time
 import csv
 import os
 
-# global config - adjust as needed
+# global config - adjust as needed, can create .env file to change these
 DB_HOST = "localhost"
 DB_USER = "root"
-DB_PASSWORD = os.getenv("MYSQL_PASSWORD", "") # Load from environment, default to empty string
-DB_PORT = int(os.getenv("MYSQL_PORT", 3308)) # Load from environment, convert to int
+DB_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
+DB_PORT = int(os.getenv("MYSQL_PORT", 3306)) # check if this is your port!!!!
 
-# --- GLOBAL HISTORY VARIABLES ---
 QUERY_HISTORY = []
 HISTORY_INDEX = -1
 MAX_HISTORY = 10
-# --------------------------------
 
 def describe_all_tables():
-    """Fetches all table names from the current DB and runs DESCRIBE for each.
-    The results are written to the sql_entry Textbox with alignment."""
+    # writes table describe to input field so you can copy
     
     db_name = selected_db.get()
     if not db_name:
@@ -37,70 +33,53 @@ def describe_all_tables():
     start_time = time.time()
 
     try:
-        # 1. Fetch all table names
         cursor.execute("SHOW TABLES")
         tables = [row[0] for row in cursor.fetchall()]
         
         if not tables:
             output = f"Database '{db_name}' contains no tables."
         else:
-            # Column headers for the description output
             desc_cols = ["Field", "Type", "Null", "Key", "Default", "Extra"]
-            
-            # --- Dynamic Formatting Start ---
-            
             for table_name in tables:
                 output += f"tablename: {table_name}\n"
                 
                 cursor.execute(f"DESCRIBE `{table_name}`")
                 desc_rows = cursor.fetchall()
-                
-                # Convert all values to strings and replace None/NULL
+
                 processed_rows = []
                 for row in desc_rows:
-                    # Convert None to the string 'NULL' for better display
+                    # None -> NULL
                     str_row = [str(x) if x is not None else 'NULL' for x in row]
                     processed_rows.append(str_row)
-
-                # Determine the maximum width of each column
                 col_widths = [len(col) for col in desc_cols]
                 for row in processed_rows:
                     for i, value in enumerate(row):
                         if i < len(col_widths): 
                             col_widths[i] = max(col_widths[i], len(value))
                         else:
-                            # Should not happen with DESCRIBE but handles unexpected columns
                             col_widths.append(len(value))
+                padding = 2  # spacing
 
-                # Spacing between columns
-                padding = 2
-                
-                # Write Header
                 header_line = ""
                 for i, col in enumerate(desc_cols):
-                    # Align left (ljust)
                     header_line += col.ljust(col_widths[i] + padding)
                 output += header_line.rstrip() + "\n"
-                
-                # Write separator line
+
                 separator_line = ""
                 for i, width in enumerate(col_widths):
                     separator_line += "-" * width + " " * padding
                 output += separator_line.rstrip() + "\n"
-                
-                # Write data rows
+
                 for row in processed_rows:
                     data_line = ""
                     for i, value in enumerate(row):
-                        # Align left (ljust)
                         data_line += value.ljust(col_widths[i] + padding)
                     output += data_line.rstrip() + "\n"
                 
-                output += "\n" # Empty line between tables
+                output += "\n" # empty line between tables
         
         duration = time.time() - start_time
-        
-        # 3. Write output to the textbox
+
         sql_entry.delete("1.0", tk.END)
         sql_entry.insert("1.0", output.strip())
         
@@ -120,7 +99,6 @@ def beautify():
     if not raw_sql:
         return
 
-    # 1. Convert to uppercase and strip
     keywords = [
         "select", "from", "where", "join", "inner", "left", "right", "on",
         "group by", "order by", "having", "limit", "offset", "insert", "into",
@@ -133,64 +111,46 @@ def beautify():
     def replace_keyword(match):
         return match.group(0).upper()
 
-    # Convert keywords to uppercase
     for kw in sorted(keywords, key=len, reverse=True):
         pattern = r"\b" + re.escape(kw) + r"\b"
         raw_sql = re.sub(pattern, replace_keyword, raw_sql, flags=re.IGNORECASE)
 
-    # 2. Add Line Breaks for major clauses
-    # Keywords that should start on a new line, prefixed with two spaces for indentation
     new_line_keywords = [
         "FROM", "WHERE", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
         "INNER JOIN", "LEFT JOIN", "RIGHT JOIN", "UNION", "VALUES", "SET"
     ]
     
     formatted_sql = raw_sql
-    
-    # Prepend major keywords with a newline and two spaces for indentation
+
     for kw in new_line_keywords:
-        # Look for the keyword followed by a space or end-of-string
+        # if keyword is followed by space or is the end of a string
         pattern = r"\s*\b" + re.escape(kw) + r"\b\s*"
-        # NOTE: Replaced the incorrect tabs/spaces with 2 spaces for standard indent
         formatted_sql = re.sub(pattern, f"\n  {kw} ", formatted_sql, flags=re.IGNORECASE)
 
-    # 3. Add Line Breaks for commas in SELECT, UPDATE, etc.
-    # This keeps each selected column or value on its own line, indented by 4 spaces.
-    
-    # Split the query by lines to process them individually
     lines = formatted_sql.split('\n')
     output_lines = []
     
     for line in lines:
         if line.strip().startswith("SELECT"):
-            # Simple split by comma followed by any whitespace, or just comma
             parts = [p.strip() for p in line[6:].split(',')]
             
             if len(parts) > 1:
-                # Keep SELECT on the first line, then indent subsequent columns
-                output_lines.append(line.split(' ', 1)[0]) # Keep "SELECT"
+                output_lines.append(line.split(' ', 1)[0])
                 for part in parts:
                     if part:
-                        # 4 spaces for column indentation
-                        output_lines.append(f"    {part},")
-                # Remove the comma from the last item
+                        output_lines.append(f"    {part},")  # 4 spaces
                 if output_lines and output_lines[-1].endswith(','):
                     output_lines[-1] = output_lines[-1][:-1]
                 continue
         
-        # 4. Indent ON clause for JOINS
+        # indent on
         if " JOIN " in line.upper() and " ON " in line.upper():
-            # Find the ON keyword
-            # NOTE: Replaced the incorrect tabs/spaces with 4 spaces for standard indent
             line = re.sub(r"\bON\b", "\n    ON", line, flags=re.IGNORECASE)
 
         output_lines.append(line.strip())
 
-    # 5. Final cleanup: Remove blank lines and excessive leading/trailing whitespace
     final_sql = "\n".join(output_lines)
-    final_sql = re.sub(r'\n\s*\n', '\n', final_sql).strip() # Remove redundant blank lines
-    
-    # 6. Write output
+    final_sql = re.sub(r'\n\s*\n', '\n', final_sql).strip()
     sql_entry.delete("1.0", tk.END)
     sql_entry.insert("1.0", final_sql)
 
@@ -288,12 +248,10 @@ def format_and_display_error(err):
     if ':' in error_message:
         # Find the index of the first colon, and start after the space/colon
         error_message = error_message[error_message.find(':') + 2:] 
-    
-    # IMPROVED UX: Specifically detect common authentication errors
+
     if "Access denied for user" in error_message or "Authentication plugin cannot be loaded" in error_message:
         error_message = "Authentication failed. Please ensure your MySQL server is running and check your username/password/port configuration."
-    
-    # Use the existing function to display the formatted message
+
     show_message_box(error_message.strip())
 
 def connect_db(database=None):
@@ -609,15 +567,12 @@ db_dropdown.pack(side="left")
 btn_desc_all = tk.Button(db_frame, text="DESC All Tables", command=describe_all_tables)
 btn_desc_all.pack(side="left", padx=(10, 5))
 
-# --- Button Frame (positioned above the PanedWindow) ---
 btn_frame = tk.Frame(root)
 btn_frame.pack(pady=5)
 
-# ADDED: Back button
 btn_back = tk.Button(btn_frame, text="< Back (F1)", command=query_back, state=tk.DISABLED)
 btn_back.pack(side="left", padx=5)
 
-# ADDED: Forward button
 btn_forward = tk.Button(btn_frame, text="Forward (F2) >", command=query_forward, state=tk.DISABLED)
 btn_forward.pack(side="left", padx=5)
 
@@ -626,31 +581,20 @@ btn_execute.pack(side="left", padx=5)
 
 btn_beautify = tk.Button(btn_frame, text="Beautify Query (F9)", command=beautify)
 btn_beautify.pack(side="left", padx=5)
-# --- End Button Frame ---
 
-
-# --- PanedWindow for resizable input/output areas ---
 paned_window = ttk.PanedWindow(root, orient=tk.VERTICAL)
 paned_window.pack(expand=True, fill="both", padx=10, pady=(0, 10))
 
-# 1. SQL Input Area (top pane)
-# Use a Frame to hold the Text widget for easier management within the PanedWindow
 sql_entry_frame = tk.Frame(paned_window)
 sql_entry = tk.Text(sql_entry_frame, height=10)
 sql_entry.pack(expand=True, fill="both") # Fill the frame
 sql_entry.insert("1.0", "SHOW TABLES")
 
-# Add initial query to history (so the index starts correctly)
 add_query_to_history(sql_entry.get("1.0", tk.END).strip()) 
 
-
-# Add the frame to the PanedWindow. weight=0 means it only takes its minimum size (height=10).
 paned_window.add(sql_entry_frame, weight=0)
 
-
-# 2. Treeview Area (bottom pane)
 tree_frame = tk.Frame(paned_window)
-# Add the treeview frame to the PanedWindow. weight=1 allows it to expand.
 paned_window.add(tree_frame, weight=1) 
 
 tree_scroll = tk.Scrollbar(tree_frame)
@@ -661,13 +605,10 @@ tree.pack(expand=True, fill="both")
 
 tree_scroll.config(command=tree.yview)
 
-# --- End PanedWindow ---
-
 feedback_label = tk.Label(root, text="", anchor="w", fg="gray")
 feedback_label.pack(fill="x", padx=10, pady=(0, 10))
 
 load_databases()
-# Initial update of history buttons after loading first query
 update_history_buttons()
 
 context_menu = tk.Menu(root, tearoff=0) # menu for right-click
@@ -679,7 +620,7 @@ def show_context_menu(event):
     item_id = tree.identify_row(event.y)
     column_id = tree.identify_column(event.x)
     
-    # lastly clear the menu to avoid duplicates
+    # finally clear the menu to avoid duplicates
     context_menu.delete(0, tk.END) 
 
     if item_id and column_id:
@@ -698,12 +639,10 @@ def show_context_menu(event):
     try:
         context_menu.post(event.x_root, event.y_root)
     except tk.TclError:
-        # Ignore TclError if the menu cannot be posted
         pass
 
 # bind right-click
 tree.bind("<Button-3>", show_context_menu)
-# Windows/Linux is <Button-3>, Mac is <Button-2>
 
 root.bind('<F5>', lambda event: execute_query()) 
 root.bind('<F9>', lambda event: beautify())
@@ -711,3 +650,4 @@ root.bind('<F1>', lambda event: query_back())
 root.bind('<F2>', lambda event: query_forward())
 
 root.mainloop()
+
