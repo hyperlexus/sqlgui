@@ -8,7 +8,7 @@ beautify buttons uses keywords and capitalises them
 `git clone https://www.github.com/hyperlexus/sqlgui.git`\
 `cd sqlgui`\
 `python -m venv venv`\
-`.\venv\Scripts\activate.bat` or `source venv/Scripts/activate`\
+`.\venv\Scripts\activate.bat`\
 `python -m pip install -r requirements.txt`\
 `python main.py`
 
