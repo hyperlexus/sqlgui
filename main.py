@@ -1,3 +1,4 @@
+#todo wenn es viele datensätze gibt, sollen nur die ersten 1000 geladen werden. Im hintergrund sollen alle geladen werden. wenn diese geladen sind, soll das gui mit allen upgedated werden.
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import mysql.connector
